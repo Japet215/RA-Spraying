@@ -74,9 +74,15 @@ float kalmanFilter(float measurement) {
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+  // Pin 10 (Timer1)3.9khz
+  //TCCR1B = TCCR1B & 0b11111000 | 0x02;
+
+  // Pin 11 (Timer2)3.9khz
+  //TCCR2B = TCCR2B & 0b11111000 | 0x02;
 
   // LCD Init
   lcd.init();
+  Wire.setClock(400000);
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -103,9 +109,12 @@ void loop() {
   long currentTime = micros();
   float deltaTime = ((float)(currentTime - previousTime)) / 1e6;
 
+  unsigned long lastLCDClear = 0;
+  const unsigned long lcdInterval = 500; // 500 ms = 0.5 sec for LCD
+
   //---Measure Pressure---
   int rawValue = analogRead(pressurePin);
-  float voltage = rawValue * (5.0 / 1024.0);
+  float voltage = rawValue * (7.0 / 1024.0);
 
   float offset = 0.5;
   float voltage_comp = voltage - offset;
@@ -146,9 +155,9 @@ void loop() {
   float dErr = (error - previousError) / deltaTime;
 
   //---Read PID Gains---
-  float Kp = mapfloat(analogRead(potKp), 0, 1024, 0, 50.0);
-  float Ki = mapfloat(analogRead(potKi), 0, 1024, 0, 30.0);
-  float Kd = mapfloat(analogRead(potKd), 0, 1024, 0, 5.0);
+  float Kp = mapfloat(analogRead(potKp), 0, 1024, 0, 100.0);
+  float Ki = mapfloat(analogRead(potKi), 0, 1024, 0, 100.0);
+  float Kd = mapfloat(analogRead(potKd), 0, 1024, 0, 50.0);
 
   float feedForward = 0.0;
 
@@ -170,26 +179,38 @@ void loop() {
   analogWrite(enablePin_B, controlInputU_B);
 
   //---Display on LCD---
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("M:");
-  lcd.print(pressureMeasured, 0);
-  lcd.print(" T:");
-  lcd.print(pressureDesired, 0);
-  lcd.print(" E:");
-  lcd.print(error, 0);
+//---LCD Timing Control---
+unsigned long currentMillis = millis();
 
-  lcd.setCursor(0, 1);
-  lcd.print("U:");
-  lcd.print((int)controlInputU_A);
-  lcd.print(" P:");
-  lcd.print(Kp, 0);
-  lcd.print(" I:");
-  lcd.print(Ki, 0);
-  lcd.print(" D:");
-  lcd.print(Kd, 0);
+if (currentMillis - lastLCDClear >= lcdInterval) {
+  lcd.clear();                  // clear every 0.5 sec
+  lastLCDClear = currentMillis;
+} else {
+  // do nothing
+}
+
+lcd.setCursor(0, 0);
+lcd.print("M:");
+lcd.print(pressureMeasured, 0);
+lcd.print(" T:");
+lcd.print(pressureDesired, 0);
+lcd.print(" E:");
+lcd.print(error, 0);
+
+lcd.setCursor(0, 1);
+//lcd.print("U:");
+//lcd.print((int)controlInputU_A);
+lcd.print(" P:");
+lcd.print(Kp, 0);
+lcd.print(" I:");
+lcd.print(Ki, 0);
+lcd.print(" D:");
+lcd.print(Kd, 0);
 
   // Serial Debug
+ 
+  Serial.print("deltaTime: ");
+  Serial.println(deltaTime);
   Serial.print("pressureMeasured:");
   Serial.print(pressureMeasured);
   Serial.print(", pressureRaw:");
