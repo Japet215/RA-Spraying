@@ -40,6 +40,16 @@ int potVal = 0;
 long previousTime = 0;
 float errorSum = 0;
 float previousError = 0;
+const float Ts = 0.01; // 100 Hz
+
+float controlFiltered = 0;
+float alphaU = 0.2;
+
+float dErrFiltered = 0;
+float alphaD = 0.1; // 0.05–0.2 works well
+
+unsigned long lastLCDClear = 0;
+const unsigned long lcdInterval = 500;
 
 float mapfloat(float x, float in_min, float in_max, float out_min, float out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -51,7 +61,7 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
 
 // --- Kalman Filter Parameters ---
 float Q = 0.05;// Process noise covariance (smoothness)
-float R = 15.0;// Measurement noise covariance (noise level)
+float R = 30.0;// Measurement noise covariance (noise level)
 float P = 1.0;// Estimation error covariance
 float X = 0.0;// Filtered value
 
@@ -109,12 +119,15 @@ void loop() {
   long currentTime = micros();
   float deltaTime = ((float)(currentTime - previousTime)) / 1e6;
 
+  if (deltaTime < Ts) return;  // control loop timing
+  deltaTime = Ts;
+
   unsigned long lastLCDClear = 0;
   const unsigned long lcdInterval = 500; // 500 ms = 0.5 sec for LCD
 
   //---Measure Pressure---
   int rawValue = analogRead(pressurePin);
-  float voltage = rawValue * (5.00 / 1024.0);
+  float voltage = rawValue * (7.50 / 1024.0);
 
   float offset = 0.5;
   float voltage_comp = voltage - offset;
@@ -144,24 +157,27 @@ void loop() {
 
   //---Setpoint---
   potVal = analogRead(potPin);
-  float pressureDesired = map(potVal, 0, 1024, 0, 300);
+  float pressureDesired = map(potVal, 0, 1024, 0, 150);
 
   //---Errors---
   float error = pressureDesired - pressureMeasured;
 
   if (error < 1) errorSum = 0;
   else errorSum += error * deltaTime;
+    if (errorSum > 50) errorSum = 50;
+    if (errorSum < -50) errorSum = -50;
 
-  float dErr = (error - previousError) / deltaTime;
+  float dErrRaw = (error - previousError) / deltaTime;
+  dErrFiltered = alphaD * dErrRaw + (1 - alphaD) * dErrFiltered;
 
   //---Read PID Gains---
-  float Kp = mapfloat(analogRead(potKp), 0, 1024, 0, 300.0);
-  float Ki = mapfloat(analogRead(potKi), 0, 1024, 0, 100.0);
-  float Kd = mapfloat(analogRead(potKd), 0, 1024, 0, 100.0);
+  float Kp = mapfloat(analogRead(potKp), 0, 1024, 0, 50.0);
+  float Ki = mapfloat(analogRead(potKi), 0, 1024, 0, 20.0);
+  float Kd = mapfloat(analogRead(potKd), 0, 1024, 0, 5.0);
 
   float feedForward = 0.0;
 
-  float PIDinput = Kp * error + Ki * errorSum + Kd * dErr;
+  float PIDinput = Kp * error + Ki * errorSum + Kd * dErrFiltered;
   if (PIDinput > 255) PIDinput = 255;
 
   // Motor Direction
@@ -172,8 +188,11 @@ void loop() {
   digitalWrite(backwardPin_B, LOW);
 
   // Actuate motors
-  float controlInputU_A = PIDinput + feedForward;
-  float controlInputU_B = -PIDinput + feedForward;
+  float controlRaw = PIDinput + feedForward;
+  controlFiltered = alphaU * controlRaw + (1 - alphaU) * controlFiltered;
+
+  float controlInputU_A = controlFiltered;
+  float controlInputU_B = -controlFiltered;
 
   analogWrite(enablePin_A, controlInputU_A);
   analogWrite(enablePin_B, controlInputU_B);

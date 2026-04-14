@@ -74,15 +74,9 @@ float kalmanFilter(float measurement) {
 void setup() {
   Serial.begin(115200);
   Wire.begin();
-  // Pin 10 (Timer1)3.9khz
-  //TCCR1B = TCCR1B & 0b11111000 | 0x02;
-
-  // Pin 11 (Timer2)3.9khz
-  //TCCR2B = TCCR2B & 0b11111000 | 0x02;
 
   // LCD Init
   lcd.init();
-  Wire.setClock(400000);
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -109,12 +103,9 @@ void loop() {
   long currentTime = micros();
   float deltaTime = ((float)(currentTime - previousTime)) / 1e6;
 
-  unsigned long lastLCDClear = 0;
-  const unsigned long lcdInterval = 500; // 500 ms = 0.5 sec for LCD
-
   //---Measure Pressure---
   int rawValue = analogRead(pressurePin);
-  float voltage = rawValue * (5.00 / 1024.0);
+  float voltage = rawValue * (5.0 / 1024.0);
 
   float offset = 0.5;
   float voltage_comp = voltage - offset;
@@ -142,27 +133,107 @@ void loop() {
   }
   float pressureMeasured = kalmanFilter(pressureRaw);
 
-  //---Setpoint---
-  potVal = analogRead(potPin);
-  float pressureDesired = map(potVal, 0, 1024, 0, 300);
+// -------- VARIABLES --------
+float pressureDesired;
+//float pressureMeasured;
 
-  //---Errors---
-  float error = pressureDesired - pressureMeasured;
+float error = 0;
+float previousError = 0;
+float errorSum = 0;
 
-  if (error < 1) errorSum = 0;
-  else errorSum += error * deltaTime;
+float Kp = 0;
+float Ki = 0;
+float Kd = 0;
 
-  float dErr = (error - previousError) / deltaTime;
+float Ku = 0;
+float Pu = 0;
 
-  //---Read PID Gains---
-  float Kp = mapfloat(analogRead(potKp), 0, 1024, 0, 300.0);
-  float Ki = mapfloat(analogRead(potKi), 0, 1024, 0, 100.0);
-  float Kd = mapfloat(analogRead(potKd), 0, 1024, 0, 100.0);
+float feedForward = 0.0;
+//float deltaTime = 0.1;
 
-  float feedForward = 0.0;
+bool autoTune = true;
 
-  float PIDinput = Kp * error + Ki * errorSum + Kd * dErr;
-  if (PIDinput > 255) PIDinput = 255;
+float KpStep = 0.05;   // how fast Kp increases
+float oscillationAmplitude;
+
+unsigned long lastCrossTime = 0;
+//unsigned long currentTime = 0;
+
+float lastMeasured = 0;
+
+int potVal;
+
+// -------- SETPOINT --------
+potVal = analogRead(potPin);
+pressureDesired = map(potVal, 0, 1024, 0, 61);
+
+// -------- ERROR --------
+error = pressureDesired - pressureMeasured;
+
+
+// =======================================
+// AUTO TUNE (ZIEGLER-NICHOLS METHOD)
+// =======================================
+
+if (autoTune)
+{
+    Ki = 0;
+    Kd = 0;
+
+    // Gradually increase proportional gain
+    Kp += KpStep;
+
+    // Detect oscillation crossing
+    if ((lastMeasured < pressureDesired && pressureMeasured >= pressureDesired) ||
+        (lastMeasured > pressureDesired && pressureMeasured <= pressureDesired))
+    {
+        currentTime = millis();
+
+        if (lastCrossTime != 0)
+        {
+            Pu = (currentTime - lastCrossTime) / 1000.0; // oscillation period
+        }
+
+        lastCrossTime = currentTime;
+    }
+
+    // Detect sustained oscillation
+    oscillationAmplitude = abs(pressureMeasured - pressureDesired);
+
+    if (oscillationAmplitude > 2.0 && Pu > 0)
+    {
+        Ku = Kp;
+
+        // Ziegler–Nichols PID formulas
+        Kp = 0.6 * Ku;
+        Ki = 1.2 * Ku / Pu;
+        Kd = 0.075 * Ku * Pu;
+
+        autoTune = false;   // stop tuning
+    }
+}
+
+lastMeasured = pressureMeasured;
+
+
+// =======================================
+// PID CONTROLLER
+// =======================================
+
+if (error < 1)
+    errorSum = 0;
+else
+    errorSum += error * deltaTime;
+
+float dErr = (error - previousError) / deltaTime;
+
+float PIDinput = Kp * error + Ki * errorSum + Kd * dErr;
+
+// Saturation
+if (PIDinput > 255) PIDinput = 255;
+if (PIDinput < 0) PIDinput = 0;
+
+previousError = error;
 
   // Motor Direction
   digitalWrite(forwardPin_A, HIGH);
@@ -179,38 +250,26 @@ void loop() {
   analogWrite(enablePin_B, controlInputU_B);
 
   //---Display on LCD---
-//---LCD Timing Control---
-unsigned long currentMillis = millis();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("M:");
+  lcd.print(pressureMeasured, 0);
+  lcd.print(" T:");
+  lcd.print(pressureDesired, 0);
+  lcd.print(" E:");
+  lcd.print(error, 0);
 
-if (currentMillis - lastLCDClear >= lcdInterval) {
-  lcd.clear();                  // clear every 0.5 sec
-  lastLCDClear = currentMillis;
-} else {
-  // do nothing
-}
-
-lcd.setCursor(0, 0);
-lcd.print("M:");
-lcd.print(pressureMeasured, 0);
-lcd.print(" T:");
-lcd.print(pressureDesired, 0);
-lcd.print(" E:");
-lcd.print(error, 0);
-
-lcd.setCursor(0, 1);
-//lcd.print("U:");
-//lcd.print((int)controlInputU_A);
-lcd.print(" P:");
-lcd.print(Kp, 0);
-lcd.print(" I:");
-lcd.print(Ki, 0);
-lcd.print(" D:");
-lcd.print(Kd, 0);
+  lcd.setCursor(0, 1);
+  lcd.print("U:");
+  lcd.print((int)controlInputU_A);
+  lcd.print(" P:");
+  lcd.print(Kp, 0);
+  lcd.print(" I:");
+  lcd.print(Ki, 0);
+  lcd.print(" D:");
+  lcd.print(Kd, 0);
 
   // Serial Debug
- 
-  Serial.print("deltaTime: ");
-  Serial.println(deltaTime);
   Serial.print("pressureMeasured:");
   Serial.print(pressureMeasured);
   Serial.print(", pressureRaw:");
