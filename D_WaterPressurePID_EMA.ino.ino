@@ -141,11 +141,11 @@ float error = 0;
 float previousError = 0;
 float errorSum = 0;
 
-float Kp = 0;
-float Ki = 0;
-float Kd = 0;
+float Kp = 150;
+float Ki = 100;
+float Kd = 100;
 
-float Ku = 0;
+float Ku = 0.5;
 float Pu = 0;
 
 float feedForward = 0.0;
@@ -153,7 +153,7 @@ float feedForward = 0.0;
 
 bool autoTune = true;
 
-float KpStep = 0.05;   // how fast Kp increases
+float KpStep = 0.5;   // how fast Kp increases
 float oscillationAmplitude;
 
 unsigned long lastCrossTime = 0;
@@ -165,7 +165,7 @@ int potVal;
 
 // -------- SETPOINT --------
 potVal = analogRead(potPin);
-pressureDesired = map(potVal, 0, 1024, 0, 61);
+pressureDesired = map(potVal, 0, 1024, 0, 150);
 
 // -------- ERROR --------
 error = pressureDesired - pressureMeasured;
